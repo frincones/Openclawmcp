@@ -1,0 +1,21 @@
+# Secretos y entorno — NUNCA subir
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.json
+
+# Dependencias
+node_modules/
+package-lock.json
+
+# Logs y temporales
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Railway / build local
+.railway/
+dist/

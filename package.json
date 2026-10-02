@@ -1,0 +1,12 @@
+{
+  "name": "openclaw-mcp-bridge",
+  "version": "1.0.0",
+  "description": "Puente MCP: expone OpenClaw a la Claude app por MCP (streamable HTTP). Claude manda ordenes, OpenClaw las ejecuta via A2A.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "express": "^4.21.2"
+  }
+}
