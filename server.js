@@ -37,6 +37,9 @@ const COMPOSIO_KEY = process.env.COMPOSIO_API_KEY || '';
 const COMPOSIO_BASE = 'https://backend.composio.dev/api/v3';
 // URL publica de ESTE puente (para armar los links del QR). Railway la inyecta.
 const SELF_URL = (process.env.PUBLIC_URL || `https://mcp-bridge-production-5313.up.railway.app`).replace(/\/+$/, '');
+// Version del puente y commit desplegado (Railway inyecta el SHA en deploys desde GitHub).
+const BRIDGE_VERSION = '10.0.0-pegaylisto';
+const DEPLOY_COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || 'local').slice(0, 7);
 
 // ---- fetch con timeout duro (para que NADA cuelgue y pegue a Claude) --------
 
@@ -697,7 +700,7 @@ function nuevoServidor() {
       const sys = await rest('GET', '/api/system/status').catch(() => ({ data: null }));
       const vivo = h && h.ok ? 'VIVO y 24/7' : 'no responde';
       const extra = sys.data ? `\nSistema: ${JSON.stringify(sys.data).slice(0, 1500)}` : '';
-      return { content: [{ type: 'text', text: `OpenClaw: ${vivo}${extra}` }] };
+      return { content: [{ type: 'text', text: `Puente MCP: v${BRIDGE_VERSION} (commit ${DEPLOY_COMMIT})\nOpenClaw: ${vivo}${extra}` }] };
     },
   );
 
@@ -1490,7 +1493,7 @@ function nuevoServidor() {
 const app = express();
 app.use(express.json({ limit: '8mb' }));
 
-app.get('/', (_req, res) => res.json({ ok: true, service: 'openclaw-mcp-bridge', version: '10.0.0-pegaylisto', openclaw: OPENCLAW_URL, control: '100%', auth: 'composio+whatsapp-qr', wizard: 'diagnostico+automatizaciones' }));
+app.get('/', (_req, res) => res.json({ ok: true, service: 'openclaw-mcp-bridge', version: BRIDGE_VERSION, commit: DEPLOY_COMMIT, openclaw: OPENCLAW_URL, control: '100%', auth: 'composio+whatsapp-qr', wizard: 'diagnostico+automatizaciones' }));
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Pagina del QR de WhatsApp: lee el qrDataUrl del conector y lo muestra,
