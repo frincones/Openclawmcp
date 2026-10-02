@@ -1,3 +1,4 @@
+// deploy test 2026-10-02
 /*
  * Puente MCP  ->  OpenClaw  (control 100%)
  *
