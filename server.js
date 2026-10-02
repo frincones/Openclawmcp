@@ -1490,7 +1490,7 @@ function nuevoServidor() {
 const app = express();
 app.use(express.json({ limit: '8mb' }));
 
-app.get('/', (_req, res) => res.json({ ok: true, service: 'openclaw-mcp-bridge', version: '10.0.0-pegaylisto', openclaw: OPENCLAW_URL, control: '100%', auth: 'composio+whatsapp-qr', wizard: 'diagnostico+automatizaciones' }));
+app.get('/', (_req, res) => res.json({ ok: true, service: 'openclaw-mcp-bridge', version: '10.0.2-web-test', openclaw: OPENCLAW_URL, control: '100%', auth: 'composio+whatsapp-qr', wizard: 'diagnostico+automatizaciones' }));
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Pagina del QR de WhatsApp: lee el qrDataUrl del conector y lo muestra,
