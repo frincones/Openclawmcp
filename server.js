@@ -35,10 +35,17 @@ const CUARTEL_TOKEN = process.env.CUARTEL_TOKEN || '';
 // La API key por defecto es de TDX; en produccion cada alumno puede poner la suya.
 const COMPOSIO_KEY = process.env.COMPOSIO_API_KEY || '';
 const COMPOSIO_BASE = 'https://backend.composio.dev/api/v3';
-// URL publica de ESTE puente (para armar los links del QR). Railway la inyecta.
+// OpenAI: para el portal de prueba de agentes de VOZ (Realtime API, speech-to-speech
+// por WebRTC en el navegador, sin numero de telefono). Reusa la misma key de los
+// agentes de OpenClaw (variable referenciada desde el servicio openclaw en Railway).
+const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
+const OPENAI_REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'marin';
+
+// URL publica de ESTE puente (para armar los links del QR y del portal de voz). Railway la inyecta.
 const SELF_URL = (process.env.PUBLIC_URL || `https://mcp-bridge-production-5313.up.railway.app`).replace(/\/+$/, '');
 // Version del puente y commit desplegado (Railway inyecta el SHA en deploys desde GitHub).
-const BRIDGE_VERSION = '10.0.0-pegaylisto';
+const BRIDGE_VERSION = '11.0.0-voz';
 const DEPLOY_COMMIT = (process.env.RAILWAY_GIT_COMMIT_SHA || 'local').slice(0, 7);
 
 // ---- fetch con timeout duro (para que NADA cuelgue y pegue a Claude) --------
@@ -1485,6 +1492,35 @@ function nuevoServidor() {
     },
   );
 
+  // ==========================================================================
+  //  AGENTES DE VOZ — portal de prueba (OpenAI Realtime, WebRTC, SIN numero)
+  // ==========================================================================
+
+  // Devuelve un LINK a un portal web donde el cliente habla con su agente de voz
+  // por el microfono (speech-to-speech de OpenAI), sin comprar numero de telefono.
+  // Ideal para el onboarding: prueba y afina el agente al instante. La telefonia
+  // real (SIP + numero) es una fase posterior.
+  server.tool(
+    'probar_agente_voz',
+    'Genera un LINK a un portal web donde el cliente PRUEBA su agente de voz hablando por el microfono, ' +
+      'sin necesidad de comprar un numero de telefono. Usa OpenAI Realtime (speech-to-speech) por WebRTC. ' +
+      'Pasa el id del agente de OpenClaw cuyo prompt se usara como la personalidad de la voz. ' +
+      'Sirve para que el dueño pruebe y afine su empleado digital de voz al instante.',
+    {
+      agentId: z.string().describe('id del agente de OpenClaw a probar en voz (ej: 1dd25b3b). Usa "default" para una demo generica.'),
+      voz: z.string().optional().describe('voz de OpenAI: alloy, ash, ballad, coral, echo, sage, shimmer, verse, marin, cedar. Por defecto marin.'),
+    },
+    async ({ agentId, voz }) => {
+      if (!OPENAI_KEY) return { content: [{ type: 'text', text: 'Falta OPENAI_API_KEY en el puente para el portal de voz.' }] };
+      const qs = voz ? `?voz=${encodeURIComponent(voz)}` : '';
+      const link = `${SELF_URL}/voz/${encodeURIComponent(agentId)}${qs}`;
+      return { content: [{ type: 'text', text:
+        `Portal de prueba de voz listo. Abre este link, da permiso al microfono y HABLA con tu agente:\n\n${link}\n\n` +
+        `Es speech-to-speech en tiempo real (OpenAI Realtime), en español, sin numero de telefono. ` +
+        `Perfecto para probar y afinar antes de pasarlo a llamadas reales. Cuesta unos centavos por minuto de prueba.` }] };
+    },
+  );
+
   return server;
 }
 
@@ -1528,6 +1564,132 @@ ${conectado
     : `<h1>Generando el codigo...</h1><p class="wait">Espera unos segundos, el QR aparecera aqui.</p>`}
 </div>
 <script>setTimeout(function(){location.reload()}, ${conectado ? 999999 : 5000});</script>
+</body></html>`;
+  res.set('Content-Type', 'text/html; charset=utf-8').send(html);
+});
+
+// ---- AGENTE DE VOZ: token efimero + portal WebRTC (OpenAI Realtime) ---------
+
+// Lista blanca de voces validas de OpenAI Realtime.
+const VOCES_OK = ['alloy','ash','ballad','coral','echo','sage','shimmer','verse','marin','cedar'];
+
+// Genera un token EFIMERO de OpenAI Realtime (~1 min). El navegador lo usa para la
+// sesion WebRTC sin ver nunca la API key real. El body puede traer {instructions, voice}.
+app.post('/voice/token', async (req, res) => {
+  if (!OPENAI_KEY) return res.status(500).json({ error: 'OPENAI_API_KEY no configurada en el puente' });
+  try {
+    const { instructions, voice } = req.body || {};
+    const v = VOCES_OK.includes(voice) ? voice : OPENAI_REALTIME_VOICE;
+    const r = await fetchT('https://api.openai.com/v1/realtime/client_secrets', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${OPENAI_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session: {
+          type: 'realtime',
+          model: OPENAI_REALTIME_MODEL,
+          instructions: (instructions || 'Eres un asistente de voz amable. Responde en español, claro y breve.').slice(0, 8000),
+          audio: { output: { voice: v } },
+        },
+      }),
+    }, 15000);
+    const text = await r.text();
+    let data; try { data = JSON.parse(text); } catch { data = {}; }
+    if (!r.ok) return res.status(r.status).json({ error: 'OpenAI rechazo el token', detail: (data && data.error) || text.slice(0, 300) });
+    // La respuesta trae { value, expires_at, session }. Devolvemos solo lo que el navegador necesita.
+    res.json({ client_secret: data.value || (data.client_secret && data.client_secret.value), model: OPENAI_REALTIME_MODEL, voice: v });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// Portal web donde el cliente HABLA con su agente de voz por el microfono.
+// Carga el prompt del agente de OpenClaw (si existe) para probar el agente real.
+app.get('/voz/:agentId', async (req, res) => {
+  const agentId = req.params.agentId;
+  const voz = VOCES_OK.includes(req.query.voz) ? req.query.voz : OPENAI_REALTIME_VOICE;
+  // Traer el prompt y nombre del agente real (si falla, demo generica).
+  let nombre = 'tu agente de voz';
+  let prompt = 'Eres un asistente de voz amable de un negocio. Saluda, pregunta en que puedes ayudar y responde en español, claro y breve. No inventes datos.';
+  try {
+    const r = await rest('GET', `/api/agents/${agentId}`);
+    if (r.ok && r.data) {
+      if (r.data.name) nombre = r.data.name;
+      if (r.data.systemPrompt) prompt = r.data.systemPrompt;
+    }
+  } catch { /* demo generica */ }
+  const promptJson = JSON.stringify(prompt);
+  const nombreSafe = String(nombre).replace(/</g, '&lt;');
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prueba tu agente de voz</title>
+<style>
+  :root{--bg:#0B0E18;--card:#161C2C;--line:#2A3348;--fg:#EDF0F7;--soft:#A6AFC6;--ok:#4FDDA0;--accent:#4C82F7;--rec:#F26B84}
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:34px 30px;max-width:420px;width:100%;text-align:center}
+  .tag{font-family:ui-monospace,monospace;font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:14px}
+  h1{font-size:1.5rem;margin:0 0 6px}
+  .sub{color:var(--soft);margin:0 0 24px;font-size:.95rem}
+  .orb{width:120px;height:120px;border-radius:50%;margin:8px auto 22px;background:radial-gradient(circle at 50% 40%,rgba(76,130,247,.35),rgba(76,130,247,.06));border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:2.2rem;transition:all .3s}
+  .orb.live{background:radial-gradient(circle at 50% 40%,rgba(79,221,160,.4),rgba(79,221,160,.08));border-color:var(--ok);animation:pulse 1.6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+  button{font:inherit;font-weight:600;font-size:1rem;border:0;border-radius:12px;padding:14px 22px;cursor:pointer;width:100%;transition:all .15s}
+  .start{background:var(--accent);color:#fff}
+  .start:hover{filter:brightness(1.1)}
+  .stop{background:var(--rec);color:#fff}
+  .estado{color:var(--soft);font-size:.9rem;margin-top:16px;min-height:1.2em}
+  .estado.on{color:var(--ok)}
+  .hint{color:#6E79A2;font-size:.78rem;margin-top:18px;line-height:1.5}
+  @media(prefers-reduced-motion:reduce){.orb.live{animation:none}}
+</style></head><body>
+<div class="card">
+  <div class="tag">TDX Evolution · Prueba de voz</div>
+  <div class="orb" id="orb">🎙️</div>
+  <h1>Habla con ${nombreSafe}</h1>
+  <p class="sub">Dale al botón, permite el micrófono y conversa. Es voz real, en tiempo real.</p>
+  <button class="start" id="btn">Hablar con mi agente</button>
+  <div class="estado" id="estado"></div>
+  <p class="hint">Sin número de teléfono. Esto es una prueba speech-to-speech directa en tu navegador. Cuando quieras pasarlo a llamadas reales, se le asigna un número.</p>
+</div>
+<script>
+const AGENT_PROMPT = ${promptJson};
+const VOICE = ${JSON.stringify(voz)};
+const btn = document.getElementById('btn');
+const estado = document.getElementById('estado');
+const orb = document.getElementById('orb');
+let pc = null, stream = null, activo = false;
+function set(t, on){ estado.textContent = t; estado.className = 'estado' + (on ? ' on' : ''); }
+async function iniciar(){
+  try{
+    set('Pidiendo permiso del micrófono…');
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    set('Conectando con tu agente…');
+    // 1) token efimero desde el puente (nunca vemos la API key real)
+    const tk = await fetch('/voice/token', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ instructions: AGENT_PROMPT, voice: VOICE }) }).then(r=>r.json());
+    if(!tk.client_secret){ set('Error: no se pudo autorizar la voz. ' + (tk.error||''), false); return; }
+    // 2) WebRTC peer hacia OpenAI
+    pc = new RTCPeerConnection();
+    const audioEl = document.createElement('audio'); audioEl.autoplay = true;
+    pc.ontrack = (e)=>{ audioEl.srcObject = e.streams[0]; };
+    stream.getTracks().forEach(t=> pc.addTrack(t, stream));
+    const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
+    const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls?model=' + encodeURIComponent(tk.model), {
+      method:'POST', body: offer.sdp,
+      headers:{ 'Authorization': 'Bearer ' + tk.client_secret, 'Content-Type': 'application/sdp' } });
+    const answer = { type:'answer', sdp: await sdpRes.text() };
+    await pc.setRemoteDescription(answer);
+    activo = true; orb.className = 'orb live'; btn.textContent = 'Terminar'; btn.className = 'stop';
+    set('🟢 En vivo — habla con tu agente', true);
+  }catch(err){ set('Error: ' + (err.message||err), false); detener(); }
+}
+function detener(){
+  activo = false; if(pc){ pc.close(); pc = null; }
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; }
+  orb.className = 'orb'; btn.textContent = 'Hablar con mi agente'; btn.className = 'start';
+}
+btn.onclick = ()=>{ activo ? detener() : iniciar(); };
+</script>
 </body></html>`;
   res.set('Content-Type', 'text/html; charset=utf-8').send(html);
 });
